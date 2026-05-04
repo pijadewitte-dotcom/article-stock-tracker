@@ -7,6 +7,24 @@ function sendJson(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
+function extractSymbol(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return '';
+
+  try {
+    const normalized = raw.replace(/^HTTPS?:/i, match => match.toLowerCase());
+    const url = new URL(normalized);
+    const quoteMatch = url.pathname.match(/\/quote\/([^/?#]+)/i);
+    const fromPath = quoteMatch && decodeURIComponent(quoteMatch[1]);
+    const fromQuery = url.searchParams.get('p') || url.searchParams.get('symbol');
+    return String(fromPath || fromQuery || '').trim().toUpperCase();
+  } catch {
+    const yahooMatch = raw.match(/finance\.yahoo\.com\/quote\/([^/?#\s]+)/i);
+    if (yahooMatch) return decodeURIComponent(yahooMatch[1]).trim().toUpperCase();
+    return raw.trim().toUpperCase();
+  }
+}
+
 async function yahooJson(path) {
   const response = await fetch(`${YAHOO_BASE}${path}`, {
     headers: {
@@ -25,17 +43,19 @@ async function yahooJson(path) {
 module.exports = async function handler(req, res) {
   try {
     const kind = req.query.kind || 'quote';
-    const symbol = String(req.query.symbol || req.query.q || '').trim();
+    const rawSymbol = String(req.query.symbol || req.query.q || '').trim();
+    const symbol = kind === 'search' ? rawSymbol : extractSymbol(rawSymbol);
 
     if (!symbol) return sendJson(res, 400, { error: 'Missing symbol or query' });
 
     let result;
     if (kind === 'search') {
-      result = await yahooJson(`/v1/finance/search?q=${encodeURIComponent(symbol)}&quotesCount=12&newsCount=0`);
+      const query = extractSymbol(symbol) || symbol;
+      result = await yahooJson(`/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=12&newsCount=0`);
     } else if (kind === 'history') {
-      result = await yahooJson(`/v8/finance/chart/${encodeURIComponent(symbol.toUpperCase())}?interval=1d&range=1mo`);
+      result = await yahooJson(`/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1mo`);
     } else {
-      result = await yahooJson(`/v8/finance/chart/${encodeURIComponent(symbol.toUpperCase())}?interval=1d&range=1d`);
+      result = await yahooJson(`/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`);
     }
 
     return sendJson(res, result.status, result.data);
